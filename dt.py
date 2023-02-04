@@ -148,13 +148,35 @@ class SATDT(object):
         else:
             return False
 
+    def parse_tree(self, node=1):
+        is_leaf = self.model.evaluate(self.v[node])
+        if is_leaf:
+            return self.model.evaluate(self.c[node])
+        for j in self.LR[node]:
+            if self.model.evaluate(self.l[node, j]):
+                l_child = self.parse_tree(node=j)
+                break
+        for j in self.RR[node]:
+            if self.model.evaluate(self.r[node, j]):
+                r_child = self.parse_tree(node=j)
+                break
+        feature = -1
+        for k in range(1, self.K+1):
+            if self.model.evaluate(self.a[k, node]):
+                feature = k
+                break
+
+        return (feature, (l_child, r_child))
+
 def test():
-    X, y = gen_data(100, 8, lambda x: (x[:,0] & x[:,1]) | (x[:,2] & x[:,3] & x[:,4]))
+    X, y = gen_data(200, 8, lambda x: (x[:,0] & x[:,1]) | (x[:,2] & x[:,3] & x[:,4]))
+    #X, y = gen_data(42, 4, lambda x: (x[:,0] & x[:,1]) | x[:, 2])
 
     for nodes in range(10, 20):
-        dt = SATDT(nodes, 8)
+        dt = SATDT(nodes, X.shape[1])
         if dt.fit(X, y):
             print(dt.model)
+            print(dt.parse_tree())
             break
         else:
             print(f'failed to solve for nodes = {nodes}')
