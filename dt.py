@@ -6,142 +6,156 @@ https://www.ijcai.org/proceedings/2018/0189.pdf
 import z3
 from toydata import gen_data
 
-def dt_sat_constraints(N, K, X, y):
-    assert X.shape[1] == K
-    assert X.shape[0] == y.shape[0]
-    # initialize
-    v = {}# leaf node
-    for i in range(1, N+1):
-        v[i] = z3.Bool(f'v{i}')
-    l = {}# left child
-    r = {}# right child
-    p = {}# node parent
+class SATDT(object):
+    def __init__(self, N, K):
+        self.N = N
+        self.K = K
+        self.model = None
+        self.data_constraints = []
+        self.constraints = []
 
-    # l/r child indices
-    LR = [set(j for j in range(i+1, min(2 * i, N-1)+1) if (j % 2 == 0)) for i in range(N+1)]
-    RR = [set(j for j in range(i+2, min(2 * i + 1, N)+1) if (j % 2 == 1)) for i in range(N+1)]
-    for i in range(1, N+1):
-        for j in LR[i]:
-            l[i, j] = z3.Bool(f'l{i},{j}')
-    for i in range(1, N+1):
-        for j in RR[i]:
-            r[i, j] = z3.Bool(f'r{i},{j}')
-    for i in range(1, N):
+        # initialize
+        self.v = {}# leaf node
+        for i in range(1, N+1):
+            self.v[i] = z3.Bool(f'v{i}')
+        self.l = {}# left child
+        self.r = {}# right child
+        self.p = {}# node parent
+
+        # l/r child indices
+        self.LR = [set(j for j in range(i+1, min(2 * i, N-1)+1) if (j % 2 == 0)) for i in range(N+1)]
+        self.RR = [set(j for j in range(i+2, min(2 * i + 1, N)+1) if (j % 2 == 1)) for i in range(N+1)]
+        for i in range(1, N+1):
+            for j in self.LR[i]:
+                self.l[i, j] = z3.Bool(f'l{i},{j}')
+        for i in range(1, N+1):
+            for j in self.RR[i]:
+                self.r[i, j] = z3.Bool(f'r{i},{j}')
+        for i in range(1, N):
+            for j in range(2, N+1):
+                self.p[j, i] = z3.Bool(f'p{j},{i}')
+
+        self.a = {}# feature is assigned to node
+        self.u = {}# feature is being discriminated against by node
+        self.d0 = {}# feature is being discriminated for value 0 by node
+        self.d1 = {}# feature is being discriminated for value 1 by node
+        self.c = {}# class of leaf node
+        for j in range(1, N+1):
+            self.c[j] = z3.Bool(f'c{j}')
+            for k in range(1, K+1):
+                self.a[k, j] = z3.Bool(f'a{k},{j}')
+                self.u[k, j] = z3.Bool(f'u{k},{j}')
+                self.d0[k, j] = z3.Bool(f'd0,{k},{j}')
+                self.d1[k, j] = z3.Bool(f'd1,{k},{j}')
+
+        ## DT SAT constraints
+        # root node is not a leaf
+        self.constraints.append(z3.Not(self.v[1]))
+
+        for i in range(1, N+1):
+            for j in self.LR[i]:
+                # if node is leaf, then no children
+                self.constraints.append(z3.Implies(self.v[i], z3.Not(self.l[i, j])))
+                # left and right child are numbered consecutively
+                self.constraints.append(self.l[i, j] == self.r[i, j+1])
+
+        for i in range(1, N+1):
+            # non-leaf node must have a child
+            if len(self.LR[i]) == 0:
+                has_child = False
+            else:
+                has_child = z3.PbEq([(self.l[i, j], 1) for j in self.LR[i]], 1)
+            self.constraints.append(z3.Implies(z3.Not(self.v[i]), has_child))
+
+            # if ith node is a parent then it must have a child
+            for j in self.LR[i]:
+                self.constraints.append(self.p[j, i] == self.l[i, j])
+            for j in self.RR[i]:
+                self.constraints.append(self.p[j, i] == self.r[i, j])
+
+        # all nodes but the first must have a parent
         for j in range(2, N+1):
-            p[j, i] = z3.Bool(f'p{j},{i}')
-    
-    constraints = []
-    # root node is not a leaf
-    constraints.append(z3.Not(v[1]))
+            self.constraints.append(z3.PbEq([(self.p[j, i], 1) for i in range(j // 2, j)], 1))
 
-    for i in range(1, N+1):
-        for j in LR[i]:
-            # if node is leaf, then no children
-            constraints.append(z3.Implies(v[i], z3.Not(l[i, j])))
-            # left and right child are numbered consecutively
-            constraints.append(l[i, j] == r[i, j+1])
-
-    for i in range(1, N+1):
-        # non-leaf node must have a child
-        if len(LR[i]) == 0:
-            has_child = False
-        else:
-            has_child = z3.PbEq([(l[i, j], 1) for j in LR[i]], 1)
-        constraints.append(z3.Implies(z3.Not(v[i]), has_child))
-
-        # if ith node is a parent then it must have a child
-        for j in LR[i]:
-            constraints.append(p[j, i] == l[i, j])
-        for j in RR[i]:
-            constraints.append(p[j, i] == r[i, j])
-
-    # all nodes but the first must have a parent
-    for j in range(2, N+1):
-        constraints.append(z3.PbEq([(p[j, i], 1) for i in range(j // 2, j)], 1))
-
-    a = {}# feature is assigned to node
-    u = {}# feature is being discriminated against by node
-    d0 = {}# feature is being discriminated for value 0 by node
-    d1 = {}# feature is being discriminated for value 1 by node
-    c = {}# class of leaf node
-    for j in range(1, N+1):
-        c[j] = z3.Bool(f'c{j}')
         for k in range(1, K+1):
-            a[k, j] = z3.Bool(f'a{k},{j}')
-            u[k, j] = z3.Bool(f'u{k},{j}')
-            d0[k, j] = z3.Bool(f'd0,{k},{j}')
-            d1[k, j] = z3.Bool(f'd1,{k},{j}')
+            # constraints to discriminate a feature for value 0
+            self.constraints.append(z3.Not(self.d0[k, 1]))
+            for j in range(2, N+1):
+                inner = []
+                for i in range(j // 2, j):
+                    if (i, j) not in self.r:
+                        self.r[i, j] = False
+                    inner.append(z3.Or(z3.And(self.p[j, i], self.d0[k, i]), z3.And(self.a[k, i], self.r[i, j])))
+                self.constraints.append(self.d0[k, j] == z3.Or(*inner))
 
-    for k in range(1, K+1):
-        # constraints to discriminate a feature for value 0
-        constraints.append(z3.Not(d0[k, 1]))
-        for j in range(2, N+1):
-            inner = []
-            for i in range(j // 2, j):
-                if (i, j) not in r:
-                    r[i, j] = False
-                inner.append(z3.Or(z3.And(p[j, i], d0[k, i]), z3.And(a[k, i], r[i, j])))
-            constraints.append(d0[k, j] == z3.Or(*inner))
+            # constraints to discriminate a feature for value 1
+            self.constraints.append(z3.Not(self.d1[k, 1]))
+            for j in range(2, N+1):
+                inner = []
+                for i in range(j // 2, j):
+                    if (i, j) not in self.l:
+                        self.l[i, j] = False
+                    inner.append(z3.Or(z3.And(self.p[j, i], self.d1[k, i]), z3.And(self.a[k, i], self.l[i, j])))
+                self.constraints.append(self.d1[k, j] == z3.Or(*inner))
 
-        # constraints to discriminate a feature for value 1
-        constraints.append(z3.Not(d1[k, 1]))
-        for j in range(2, N+1):
-            inner = []
-            for i in range(j // 2, j):
-                if (i, j) not in l:
-                    l[i, j] = False
-                inner.append(z3.Or(z3.And(p[j, i], d1[k, i]), z3.And(a[k, i], l[i, j])))
-            constraints.append(d1[k, j] == z3.Or(*inner))
+            # to use a feature at node
+            for j in range(1, N+1):
+                inner1 = []
+                inner2 = []
+                for i in range(max(j//2, 1), j):
+                    inner1.append(z3.Implies(z3.And(self.u[k, i], self.p[j, i]), z3.Not(self.a[k, j])))
+                    inner2.append(z3.And(self.u[k, i], self.p[j, i]))
 
-        # to use a feature at node
+                self.constraints.append(z3.And(*inner1))
+                self.constraints.append(self.u[k, j] == z3.Or(self.a[k, j], *inner2))
+
         for j in range(1, N+1):
-            inner1 = []
-            inner2 = []
-            for i in range(max(j//2, 1), j):
-                inner1.append(z3.Implies(z3.And(u[k, i], p[j, i]), z3.Not(a[k, j])))
-                inner2.append(z3.And(u[k, i], p[j, i]))
+            # for a non-leaf node, exactly one feature is used
+            one_feature = z3.PbEq([(self.a[k, j], 1) for k in range(1, K+1)], 1)
+            self.constraints.append(z3.Implies(z3.Not(self.v[j]), one_feature))
 
-            constraints.append(z3.And(*inner1))
-            constraints.append(u[k, j] == z3.Or(a[k, j], *inner2))
-            
-    for j in range(1, N+1):
-        # for a non-leaf node, exactly one feature is used
-        one_feature = z3.PbEq([(a[k, j], 1) for k in range(1, K+1)], 1)
-        constraints.append(z3.Implies(z3.Not(v[j]), one_feature))
+            # for a leaf node, no feature is used
+            no_feature = z3.PbEq([(self.a[k, j], 1) for k in range(1, K+1)], 0)
+            self.constraints.append(z3.Implies(self.v[j], no_feature))
 
-        # for a leaf node, no feature is used
-        no_feature = z3.PbEq([(a[k, j], 1) for k in range(1, K+1)], 0)
-        constraints.append(z3.Implies(v[j], no_feature))
 
-    data_cons = []
-    # positive examples
-    for x in X[y]:
-        for j in range(1, N+1):
-            inner = []
-            for k in range(1, K+1):
-                inner.append(d1[k, j] if x[k - 1] else d0[k, j])
-            data_cons.append(z3.Implies(z3.And(v[j], z3.Not(c[j])), z3.Or(*inner)))
+    def fit(self, X, y):
+        assert X.shape[1] == self.K
+        assert X.shape[0] == y.shape[0]
+        self.data_constraints = []
 
-    # negative examples
-    for x in X[~y]:
-        for j in range(1, N+1):
-            inner = []
-            for k in range(1, K+1):
-                inner.append(d1[k, j] if x[k - 1] else d0[k, j])
-            data_cons.append(z3.Implies(z3.And(v[j], c[j]), z3.Or(*inner)))
+        # positive examples
+        for x in X[y]:
+            for j in range(1, self.N+1):
+                inner = []
+                for k in range(1, self.K+1):
+                    inner.append(self.d1[k, j] if x[k - 1] else self.d0[k, j])
+                self.data_constraints.append(z3.Implies(z3.And(self.v[j], z3.Not(self.c[j])), z3.Or(*inner)))
 
-    return constraints + data_cons
+        # negative examples
+        for x in X[~y]:
+            for j in range(1, self.N+1):
+                inner = []
+                for k in range(1, self.K+1):
+                    inner.append(self.d1[k, j] if x[k - 1] else self.d0[k, j])
+                self.data_constraints.append(z3.Implies(z3.And(self.v[j], self.c[j]), z3.Or(*inner)))
+
+        s = z3.Solver()
+        s.add(self.constraints + self.data_constraints)
+        if s.check() == z3.sat:
+            self.model = s.model()
+            return True
+        else:
+            return False
 
 def test():
     X, y = gen_data(100, 8, lambda x: (x[:,0] & x[:,1]) | (x[:,2] & x[:,3] & x[:,4]))
 
     for nodes in range(10, 20):
-        constraints = dt_sat_constraints(nodes, 8, X.copy(), y.copy())
-        s = z3.Solver()
-        s.add(constraints)
-        if s.check() == z3.sat:
-            m = s.model()
-            print(m)
+        dt = SATDT(nodes, 8)
+        if dt.fit(X, y):
+            print(dt.model)
+            break
         else:
             print(f'failed to solve for nodes = {nodes}')
 
