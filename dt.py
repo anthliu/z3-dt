@@ -119,26 +119,24 @@ class SATDT(object):
             self.constraints.append(z3.Implies(self.v[j], no_feature))
 
 
-    def fit(self, X, y):
+    def _data_constraints(self, X, y):
         assert X.shape[1] == self.K
         assert X.shape[0] == y.shape[0]
         self.data_constraints = []
 
-        # positive examples
-        for x in X[y]:
+        for _x, _y in zip(X, y):
             for j in range(1, self.N+1):
                 inner = []
                 for k in range(1, self.K+1):
-                    inner.append(self.d1[k, j] if x[k - 1] else self.d0[k, j])
-                self.data_constraints.append(z3.Implies(z3.And(self.v[j], z3.Not(self.c[j])), z3.Or(*inner)))
+                    inner.append(self.d1[k, j] if _x[k - 1] else self.d0[k, j])
+                # positive examples
+                if _y:
+                    self.data_constraints.append(z3.Implies(z3.And(self.v[j], z3.Not(self.c[j])), z3.Or(*inner)))
+                else:
+                    self.data_constraints.append(z3.Implies(z3.And(self.v[j], self.c[j]), z3.Or(*inner)))
 
-        # negative examples
-        for x in X[~y]:
-            for j in range(1, self.N+1):
-                inner = []
-                for k in range(1, self.K+1):
-                    inner.append(self.d1[k, j] if x[k - 1] else self.d0[k, j])
-                self.data_constraints.append(z3.Implies(z3.And(self.v[j], self.c[j]), z3.Or(*inner)))
+    def fit(self, X, y):
+        self._data_constraints(X, y)
 
         s = z3.Solver()
         s.add(self.constraints + self.data_constraints)
@@ -168,12 +166,25 @@ class SATDT(object):
 
         return (feature, (l_child, r_child))
 
+class SoftSATDT(SATDT):
+    def fit(self, X, y):
+        self._data_constraints(X, y)
+
+        s = z3.Optimize()
+        s.add(self.constraints)
+        s.add_soft(self.data_constraints, weight=1, id='error')
+        if s.check() == z3.sat:
+            self.model = s.model()
+            return True
+        else:
+            return False
+
 def test():
     X, y = gen_data(200, 8, lambda x: (x[:,0] & x[:,1]) | (x[:,2] & x[:,3] & x[:,4]))
     #X, y = gen_data(42, 4, lambda x: (x[:,0] & x[:,1]) | x[:, 2])
 
-    for nodes in range(10, 20):
-        dt = SATDT(nodes, X.shape[1])
+    for nodes in range(15, 20):
+        dt = SoftSATDT(nodes, X.shape[1])
         if dt.fit(X, y):
             print(dt.model)
             print(dt.parse_tree())
