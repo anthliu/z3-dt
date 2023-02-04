@@ -27,11 +27,22 @@ def dt_sat_constraints(N, X):
         for j in range(2, N+1):
             p[j, i] = z3.Bool(f'p{j}{i}')
     
-    print(v)
-    print(l)
-    print(r)
-    print(p)
-    assert False
+    constraints = []
+    constraints.append(
+        z3.Not(v[1])
+    )
+    for i in range(1, N+1):
+        for j in LR[i]:
+            constraints.append(
+                z3.Implies(v[i], z3.Not(l[i, j]))
+            )
+            constraints.append(
+                l[i, j] == r[i, j+1]
+            )
+
+    for i in range(1, N+1):
+        #has_child = z3.Or(*())
+        ...
 
 def test():
     X, y = gen_data(20, 8, lambda x: (x[0] & x[1]) | (x[2] & x[3] & x[4]))
