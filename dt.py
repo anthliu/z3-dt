@@ -119,7 +119,6 @@ class SATDT(object):
             no_feature = z3.PbEq([(self.a[k, j], 1) for k in range(1, K+1)], 0)
             self.constraints.append(z3.Implies(self.v[j], no_feature))
 
-
     def _data_constraints(self, X, y):
         assert X.shape[1] == self.K
         assert X.shape[0] == y.shape[0]
@@ -143,21 +142,22 @@ class SATDT(object):
         s.add(self.constraints + self.data_constraints)
         if s.check() == z3.sat:
             self.model = s.model()
+            self.tree = self._parse_tree()
             return True
         else:
             return False
 
-    def parse_tree(self, node=1):
+    def _parse_tree(self, node=1):
         is_leaf = self.model.evaluate(self.v[node])
         if is_leaf:
             return self.model.evaluate(self.c[node])
         for j in self.LR[node]:
             if self.model.evaluate(self.l[node, j]):
-                l_child = self.parse_tree(node=j)
+                l_child = self._parse_tree(node=j)
                 break
         for j in self.RR[node]:
             if self.model.evaluate(self.r[node, j]):
-                r_child = self.parse_tree(node=j)
+                r_child = self._parse_tree(node=j)
                 break
         feature = -1
         for k in range(1, self.K+1):
@@ -166,6 +166,15 @@ class SATDT(object):
                 break
 
         return (feature, (l_child, r_child))
+
+    def predict(self, X):
+        y = []
+        for x in X:
+            pointer = tuple(self.tree)
+            while isinstance(pointer, tuple):
+                pointer = pointer[1][int(x[pointer[0] - 1])]
+            y.append(pointer)
+        return np.array(y)
 
 class SoftSATDT(SATDT):
     def fit(self, X, y, ws=None, gws=None):
@@ -197,22 +206,31 @@ class SoftSATDT(SATDT):
         if s.check() == z3.sat:
             self.model = s.model()
             self.error = sum(self.model.evaluate(obj).as_long() for obj in s.objectives())
+            self.tree = self._parse_tree()
             return True
         else:
             return False
 
 def test():
     np.random.seed(42)
-    X, y = gen_data(200, 8, lambda x: (x[:,0] & x[:,1]) | (x[:,2] & x[:,3] & x[:,4]))
+    gt_f = lambda x: (x[:,0] & x[:,1]) | (x[:,2] & x[:,3] & x[:,4])
+    X, y = gen_data(200, 8, gt_f, noise=0.05)
+    X_test, y_test = gen_data(100, 8, gt_f)
     #X, y = gen_data(42, 4, lambda x: (x[:,0] & x[:,1]) | x[:, 2])
 
     for nodes in range(10, 20):
         dt = SoftSATDT(nodes, X.shape[1])
-        if dt.fit(X, y, gws=[(100, 1), (100, 2)]):
-        #if dt.fit(X, y):
+        #if dt.fit(X, y, gws=[(100, 1), (100, 2)]):
+        if dt.fit(X, y):
             #print(dt.model)
-            print(dt.parse_tree())
+            print(dt.tree)
+            y_pred = dt.predict(X)
+            train_acc = (y == y_pred).mean()
+
+            y_test_pred = dt.predict(X_test)
+            test_acc = (y_test == y_test_pred).mean()
             print(f'Nodes {nodes} error: {dt.error}')
+            print(f'train acc: {train_acc:.3f}, test acc: {test_acc:.3f}')
         else:
             print(f'failed to solve for nodes = {nodes}')
 
