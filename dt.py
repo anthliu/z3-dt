@@ -212,15 +212,17 @@ class SoftSATDT(SATDT):
             return False
 
 def test():
+    import time
     np.random.seed(42)
     gt_f = lambda x: (x[:,0] & x[:,1]) | (x[:,2] & x[:,3] & x[:,4])
-    X, y = gen_data(200, 8, gt_f, noise=0.05)
-    X_test, y_test = gen_data(100, 8, gt_f)
+    X, y = gen_data(50, 20, gt_f, noise=0.05)
+    X_test, y_test = gen_data(100, 20, gt_f)
     #X, y = gen_data(42, 4, lambda x: (x[:,0] & x[:,1]) | x[:, 2])
 
     for nodes in range(10, 20):
         dt = SoftSATDT(nodes, X.shape[1])
         #if dt.fit(X, y, gws=[(100, 1), (100, 2)]):
+        start = time.time()
         if dt.fit(X, y):
             #print(dt.model)
             print(dt.tree)
@@ -233,6 +235,8 @@ def test():
             print(f'train acc: {train_acc:.3f}, test acc: {test_acc:.3f}')
         else:
             print(f'failed to solve for nodes = {nodes}')
+        end = time.time()
+        print(f'elapsed {end - start:0.3f} seconds.')
 
 if __name__ == '__main__':
     test()
