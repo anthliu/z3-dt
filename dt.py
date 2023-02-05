@@ -3,6 +3,7 @@ Implements the DT->SAT algorithm from "Learning Optimal Decision Trees with SAT"
 https://www.ijcai.org/proceedings/2018/0189.pdf
 '''
 
+import numpy as np
 import z3
 from toydata import gen_data
 
@@ -167,14 +168,24 @@ class SATDT(object):
         return (feature, (l_child, r_child))
 
 class SoftSATDT(SATDT):
-    def fit(self, X, y):
+    def fit(self, X, y, ws=None):
+        if ws is not None:
+            assert X.shape[0] == ws.shape[0]
         self._data_constraints(X, y)
 
         s = z3.Optimize()
         s.add(self.constraints)
-        s.add_soft(self.data_constraints, weight=1, id='error')
+        if ws is not None:
+            assert len(self.data_constraints) == self.N * ws.shape[0]
+            for idx in range(ws.shape[0]):
+                start_idx = self.N * idx
+                end_idx = self.N * idx + self.N
+                s.add_soft(self.data_constraints[start_idx:end_idx], weight=int(ws[idx]), id=f'err{idx}')
+        else:
+            s.add_soft(self.data_constraints, weight=1, id=f'err')
         if s.check() == z3.sat:
             self.model = s.model()
+            self.error = sum(self.model.evaluate(obj).as_long() for obj in s.objectives())
             return True
         else:
             return False
@@ -183,12 +194,12 @@ def test():
     X, y = gen_data(200, 8, lambda x: (x[:,0] & x[:,1]) | (x[:,2] & x[:,3] & x[:,4]))
     #X, y = gen_data(42, 4, lambda x: (x[:,0] & x[:,1]) | x[:, 2])
 
-    for nodes in range(15, 20):
+    for nodes in range(10, 20):
         dt = SoftSATDT(nodes, X.shape[1])
         if dt.fit(X, y):
-            print(dt.model)
+            #print(dt.model)
             print(dt.parse_tree())
-            break
+            print(f'Nodes {nodes} error: {dt.error}')
         else:
             print(f'failed to solve for nodes = {nodes}')
 
