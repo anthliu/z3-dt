@@ -168,9 +168,11 @@ class SATDT(object):
         return (feature, (l_child, r_child))
 
 class SoftSATDT(SATDT):
-    def fit(self, X, y, ws=None):
+    def fit(self, X, y, ws=None, gws=None):
         if ws is not None:
             assert X.shape[0] == ws.shape[0]
+        if gws is not None:
+            assert X.shape[0] == sum(gw[0] for gw in gws)
         self._data_constraints(X, y)
 
         s = z3.Optimize()
@@ -181,6 +183,15 @@ class SoftSATDT(SATDT):
                 start_idx = self.N * idx
                 end_idx = self.N * idx + self.N
                 s.add_soft(self.data_constraints[start_idx:end_idx], weight=int(ws[idx]), id=f'err{idx}')
+        elif gws is not None:
+            assert len(self.data_constraints) == self.N * sum(gw[0] for gw in gws)
+            idx = 0
+            for group, w in gws:
+                start_idx = self.N * idx
+                end_idx = self.N * idx + self.N * group
+                s.add_soft(self.data_constraints[start_idx:end_idx], weight=w, id=f'err{idx}')
+                idx += group
+            assert idx == X.shape[0]
         else:
             s.add_soft(self.data_constraints, weight=1, id=f'err')
         if s.check() == z3.sat:
@@ -191,12 +202,14 @@ class SoftSATDT(SATDT):
             return False
 
 def test():
+    np.random.seed(42)
     X, y = gen_data(200, 8, lambda x: (x[:,0] & x[:,1]) | (x[:,2] & x[:,3] & x[:,4]))
     #X, y = gen_data(42, 4, lambda x: (x[:,0] & x[:,1]) | x[:, 2])
 
     for nodes in range(10, 20):
         dt = SoftSATDT(nodes, X.shape[1])
-        if dt.fit(X, y):
+        if dt.fit(X, y, gws=[(100, 1), (100, 2)]):
+        #if dt.fit(X, y):
             #print(dt.model)
             print(dt.parse_tree())
             print(f'Nodes {nodes} error: {dt.error}')
