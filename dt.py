@@ -8,12 +8,13 @@ import z3
 from toydata import gen_data
 
 class SATDT(object):
-    def __init__(self, N, K):
+    def __init__(self, N, K, additional_constraints=True):
         self.N = N
         self.K = K
         self.model = None
         self.data_constraints = []
         self.constraints = []
+        self.additional_constraints = additional_constraints
 
         # initialize
         self.v = {}# leaf node
@@ -119,6 +120,44 @@ class SATDT(object):
             no_feature = z3.PbEq([(self.a[k, j], 1) for k in range(1, K+1)], 0)
             self.constraints.append(z3.Implies(self.v[j], no_feature))
 
+        ## DT SAT additional constraints
+        if not additional_constraints:
+            return
+
+        # additional constraints
+        self.lbda = {}# upper bound on descendents
+        self.gamma = {}# lower bound on descendents
+        self.lbda[0, 0] = False
+        self.gamma[0, 0] = False
+        for i in range(1, N+1):
+            self.lbda[0, i] = True
+            self.gamma[0, i] = True
+            for j in range(1, (N//2)+1):
+                self.lbda[j, i] = z3.Bool(f'lbda,{j},{i}')
+                self.lbda[j, 0] = False
+            for t in range(1, N+1):
+                self.gamma[t, i] = z3.Bool(f'gamma,{t},{i}')
+                self.gamma[t, 0] = False
+
+        # upper bound on descendents
+        for i in range(1, N+1):
+            for t in range(1, (N//2)+1):
+                #self.constraints.append(self.lbda[t, i] == z3.And(z3.Or(self.lbda[t, i - 1], self.lbda[t - 1, i - 1]), self.v[i]))
+                self.constraints.append(self.lbda[t, i] == z3.Or(self.lbda[t, i - 1], z3.And(self.lbda[t - 1, i - 1], self.v[i])))
+                l_descendent = self.l.get((i, 2 * (i - t + 1)), False)
+                r_descendent = self.r.get((i, 2 * (i - t + 1) + 1), False)
+                self.constraints.append(z3.Implies(self.lbda[t, i], z3.And(z3.Not(l_descendent), z3.Not(r_descendent))))
+        # lower bound on descendents
+        for i in range(1, N+1):
+            for t in range(1, i+1):
+                #self.constraints.append(self.gamma[t, i] == z3.And(z3.Or(self.gamma[t, i - 1], self.gamma[t - 1, i - 1]), z3.Not(self.v[i])))
+                self.constraints.append(self.gamma[t, i] == z3.Or(self.gamma[t, i - 1], z3.And(self.gamma[t - 1, i - 1], z3.Not(self.v[i]))))
+
+            for t in range(np.int_(np.ceil(i / 2)), i + 1):
+                l_descendent = self.l.get((i, 2 * (t - 1)), False)
+                r_descendent = self.r.get((i, 2 * t - 1), False)
+                self.constraints.append(z3.Implies(self.gamma[t, i], z3.And(z3.Not(l_descendent), z3.Not(r_descendent))))
+
     def _data_constraints(self, X, y):
         assert X.shape[1] == self.K
         assert X.shape[0] == y.shape[0]
@@ -220,7 +259,7 @@ def test():
     #X, y = gen_data(42, 4, lambda x: (x[:,0] & x[:,1]) | x[:, 2])
 
     for nodes in range(10, 20):
-        dt = SoftSATDT(nodes, X.shape[1])
+        dt = SoftSATDT(nodes, X.shape[1], additional_constraints=True)
         #if dt.fit(X, y, gws=[(100, 1), (100, 2)]):
         start = time.time()
         if dt.fit(X, y):
