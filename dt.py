@@ -181,6 +181,7 @@ class SATDT(object):
         s.add(self.constraints + self.data_constraints)
         if s.check() == z3.sat:
             self.model = s.model()
+            self.error = 0.0
             self.tree = self._parse_tree()
             return True
         else:
@@ -276,13 +277,15 @@ def test():
     import time
     np.random.seed(42)
     gt_f = lambda x: (x[:,0] & x[:,1]) | (x[:,2] & x[:,3] & x[:,4])
-    X, y = gen_data(50, 20, gt_f, noise=0.05)
-    X_test, y_test = gen_data(100, 20, gt_f)
+    noise = 0.05
+    X, y = gen_data(50, 30, gt_f, noise=noise)
+    X_test, y_test = gen_data(100, 30, gt_f)
     #X, y = gen_data(42, 4, lambda x: (x[:,0] & x[:,1]) | x[:, 2])
     ws = 0.6 + 0.4 * np.random.binomial(1, 0.3, X.shape[0]) + np.random.randn(X.shape[0]) * 1e-4
 
     for nodes in range(10, 20):
         dt = SoftSATDT(nodes, X.shape[1], additional_constraints=True)
+        #dt = SATDT(nodes, X.shape[1], additional_constraints=True)
         start = time.time()
         #if dt.fit(X, y, ws):
         if dt.fit(X, y):
