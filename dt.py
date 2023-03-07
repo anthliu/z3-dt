@@ -216,35 +216,57 @@ class SATDT(object):
         return np.array(y)
 
 class SoftSATDT(SATDT):
-    def fit(self, X, y, ws=None, gws=None):
+    def _int_approx(self, ws, err=1e-2):
+        norm_ws = ws / ws.sum()
+        coef = 1 / ws.min()
+        for i in range(30):
+            approx = np.rint(ws * coef).astype(np.int_)
+            if np.max(np.abs((approx / approx.sum()) - norm_ws)) < err:
+                break
+            coef *= 2
+        return approx
+    def _get_weight_groups(self, ws, eps=1e-3):
+        centers = np.zeros(0)
+        members = []
+        for i, w in enumerate(ws):
+            scores = np.abs(centers - w)
+            if np.any(scores < eps):
+                group = scores.argmin()
+                members[group].append(i)
+            else:
+                centers = np.append(centers, w)
+                members.append([i])
+        approx_centers = self._int_approx(centers)
+        return list(zip(members, approx_centers))
+
+    def fit(self, X, y, ws=None):
         if ws is not None:
-            assert X.shape[0] == ws.shape[0]
-        if gws is not None:
-            assert X.shape[0] == sum(gw[0] for gw in gws)
+            assert ws.min() > 0
+            gws = self._get_weight_groups(ws)
+        else:
+            gws = [(list(range(X.shape[0])), 1)]
+
+        assert X.shape[0] == sum(len(gw[0]) for gw in gws)
+        assert set(range(X.shape[0])) == set().union(*(gw[0] for gw in gws))
         self._data_constraints(X, y)
 
         s = z3.Optimize()
         s.add(self.constraints)
-        if ws is not None:
-            assert len(self.data_constraints) == self.N * ws.shape[0]
-            for idx in range(ws.shape[0]):
-                start_idx = self.N * idx
-                end_idx = self.N * idx + self.N
-                s.add_soft(self.data_constraints[start_idx:end_idx], weight=int(ws[idx]), id=f'err{idx}')
-        elif gws is not None:
-            assert len(self.data_constraints) == self.N * sum(gw[0] for gw in gws)
-            idx = 0
-            for group, w in gws:
-                start_idx = self.N * idx
-                end_idx = self.N * idx + self.N * group
-                s.add_soft(self.data_constraints[start_idx:end_idx], weight=w, id=f'err{idx}')
-                idx += group
-            assert idx == X.shape[0]
-        else:
-            s.add_soft(self.data_constraints, weight=1, id=f'err')
+
+        assert len(self.data_constraints) == self.N * sum(len(gw[0]) for gw in gws)
+        for idx, (group, w) in enumerate(gws):
+            sub_constraints = []
+            for i in group:
+                lower = i * self.N
+                upper = (i + 1) * self.N
+                sub_constraints.extend(self.data_constraints[lower:upper])
+            s.add_soft(sub_constraints, weight=int(w), id=f'err{idx}')
+        #s.add_soft(self.data_constraints, weight=1, id='err')
+
+        total_gws = sum(len(gw[0]) * gw[1] for gw in gws)
         if s.check() == z3.sat:
             self.model = s.model()
-            self.error = sum(self.model.evaluate(obj).as_long() for obj in s.objectives())
+            self.error = sum(self.model.evaluate(obj).as_long() / total_gws for obj in s.objectives())
             self.tree = self._parse_tree()
             return True
         else:
@@ -257,11 +279,12 @@ def test():
     X, y = gen_data(50, 20, gt_f, noise=0.05)
     X_test, y_test = gen_data(100, 20, gt_f)
     #X, y = gen_data(42, 4, lambda x: (x[:,0] & x[:,1]) | x[:, 2])
+    ws = 0.6 + 0.4 * np.random.binomial(1, 0.3, X.shape[0]) + np.random.randn(X.shape[0]) * 1e-4
 
     for nodes in range(10, 20):
         dt = SoftSATDT(nodes, X.shape[1], additional_constraints=True)
-        #if dt.fit(X, y, gws=[(100, 1), (100, 2)]):
         start = time.time()
+        #if dt.fit(X, y, ws):
         if dt.fit(X, y):
             #print(dt.model)
             print(dt.tree)
