@@ -183,6 +183,7 @@ class SATDT(object):
             self.model = s.model()
             self.error = 0.0
             self.tree = self._parse_tree()
+            self.sop = self._to_sop(self.tree, self.K)
             return True
         else:
             return False
@@ -206,6 +207,29 @@ class SATDT(object):
                 break
 
         return (feature, (l_child, r_child))
+
+    def _to_sop(self, root, num_feats):
+        if not isinstance(root, tuple):
+            return None# is leaf node
+        all_sop = []
+        empty_sop = np.zeros(num_feats, dtype=np.int_)
+        nodes = [(empty_sop, root)]
+        while len(nodes) > 0:
+            sop, node = nodes.pop()
+            if not isinstance(node, tuple):
+                if node:
+                    all_sop.append(sop)
+                continue
+            left_sop = sop.copy()
+            right_sop = sop.copy()
+
+            feature, (left, right) = node
+            left_sop[feature - 1] = -1
+            right_sop[feature - 1] = 1
+
+            nodes.append((left_sop, left))
+            nodes.append((right_sop, right))
+        return np.stack(all_sop)
 
     def predict(self, X):
         y = []
@@ -269,6 +293,7 @@ class SoftSATDT(SATDT):
             self.model = s.model()
             self.error = sum(self.model.evaluate(obj).as_long() / total_gws for obj in s.objectives())
             self.tree = self._parse_tree()
+            self.sop = self._to_sop(self.tree, self.K)
             return True
         else:
             return False
@@ -277,8 +302,8 @@ def test():
     import time
     np.random.seed(42)
     gt_f = lambda x: (x[:,0] & x[:,1]) | (x[:,2] & x[:,3] & x[:,4])
-    noise = 0.05
-    X, y = gen_data(50, 30, gt_f, noise=noise)
+    noise = 0.00
+    X, y = gen_data(100, 30, gt_f, noise=noise)
     X_test, y_test = gen_data(100, 30, gt_f)
     #X, y = gen_data(42, 4, lambda x: (x[:,0] & x[:,1]) | x[:, 2])
     ws = 0.6 + 0.4 * np.random.binomial(1, 0.3, X.shape[0]) + np.random.randn(X.shape[0]) * 1e-4
@@ -289,14 +314,15 @@ def test():
         start = time.time()
         #if dt.fit(X, y, ws):
         if dt.fit(X, y):
-            #print(dt.model)
-            print(dt.tree)
+            print(f'#### Nodes {nodes} ####')
+            #print('sop:', dt.sop)
+            print('tree:', dt.tree)
+            print(f'error: {dt.error}')
             y_pred = dt.predict(X)
             train_acc = (y == y_pred).mean()
 
             y_test_pred = dt.predict(X_test)
             test_acc = (y_test == y_test_pred).mean()
-            print(f'Nodes {nodes} error: {dt.error}')
             print(f'train acc: {train_acc:.3f}, test acc: {test_acc:.3f}')
         else:
             print(f'failed to solve for nodes = {nodes}')
